@@ -83,7 +83,7 @@ if [ -d "$REPO_DIR/.git" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Shared helper: prompt for the llama-swap endpoint and write a .env file if
+# Shared helper: prompt for the OCR endpoint and write a .env file if
 # one doesn't exist. Returns the chosen endpoint in $SHARED_ENDPOINT (so a
 # --target both run can prompt once and reuse it for the pi side without a
 # second prompt).
@@ -100,11 +100,11 @@ ensure_env_file() {
         return
     fi
     echo ""
-    echo "No .env found for $label. This tool requires a llama-swap proxy endpoint that provides:"
+    echo "No .env found for $label. This tool requires an OCR proxy endpoint that provides:"
     echo "  - OCR model serving (DeepSeek-OCR / GLM-OCR)"
     echo "  - Model status endpoint (/running)"
     echo "  - Model capability checks (/upstream/{model}/props)"
-    read -p "Enter llama-swap endpoint URL (e.g., http://localhost:8080): " ENDPOINT
+    read -p "Enter OCR endpoint URL (e.g., http://localhost:8080): " ENDPOINT
     if [ -z "$ENDPOINT" ]; then
         echo "Warning: No endpoint provided. Using default http://localhost:8080"
         ENDPOINT="http://localhost:8080"

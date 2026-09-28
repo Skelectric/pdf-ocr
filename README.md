@@ -1,68 +1,25 @@
 # PDF OCR Tool
 
-An OCR tool for processing PDF files. Converts PDFs to high-quality images, performs OCR on each page, and returns markdown or plain text output. Supports both dedicated OCR models and multimodal vision models. Usable from both **OpenCode** and **pi**.
+An OCR backend for PDF files. Converts PDFs to high-quality page images, performs
+OCR on each page via an OpenAI-compatible model endpoint, and returns markdown
+output. Supports dedicated OCR models and multimodal vision models, selected per
+loaded-model set.
+
+`pdf-ocr/tool/pdf_ocr_backend.py` is the tool. Host adapters live beside it and
+only wrap the backend; see [Compatibility](#compatibility) for which adapter goes
+where.
 
 ## Installation
 
-The `deploy-tool.sh` script deploys to either or both harnesses:
-
-- **OpenCode** tool → `~/.config/opencode/tool/` (`pdf-ocr.ts` + backend)
-- **pi** extension → `~/.pi/agent/extensions/pdf-ocr/` + `~/.config/pi/tool/` (backend)
-
-Each harness owns its own `.env` and `ocr_routing.json`; nothing is shared at runtime. Use `--target` to deploy to only one harness (useful if you don't have the other installed):
+The backend is a `uv` project under `pdf-ocr/`:
 
 ```bash
-./deploy-tool.sh --target opencode   # OpenCode only
-./deploy-tool.sh --target pi         # pi only
-./deploy-tool.sh --target both       # both (default)
+cd pdf-ocr
+uv sync
 ```
 
-### OpenCode
-
-This tool should be installed globally at `~/.config/opencode/tool/`.
-
-### Automated Installation/Update (Recommended)
-
-Use the provided deployment script for one-command installation and updates:
-
-```bash
-# Initial installation (OpenCode + pi)
-./deploy-tool.sh
-
-# Update after making changes to the repository
-./deploy-tool.sh
-
-# Force reinstallation (even if already installed)
-./deploy-tool.sh --force
-
-# Deploy to only one harness (skip the other)
-./deploy-tool.sh --target opencode
-./deploy-tool.sh --target pi
-
-# Specify custom repository path
-./deploy-tool.sh --repo /path/to/opencode-ocr
-```
-
-The script automatically detects if the tool is already installed and performs an update instead. After deploying the pi extension, run `/reload` in pi to load the `pdf_ocr` tool.
-
-### pi
-
-`./deploy-tool.sh --target pi` deploys only the pi extension and its backend (use `--target both` or omit `--target` to also deploy to OpenCode). The pi backend lives at `~/.config/pi/tool/` (override with the `PDF_OCR_TOOL_DIR` env var), and the extension at `~/.pi/agent/extensions/pdf-ocr/`. After deploying, run `/reload` in pi. See `pdf-ocr/pi/README.md` for pi-specific details.
-
-### Manual Installation
-
-```bash
-# Create tool directory
-mkdir -p ~/.config/opencode/tool/
-
-# Copy files
-cp pdf-ocr.ts ~/.config/opencode/tool/
-cp pdf_ocr_backend.py ~/.config/opencode/tool/
-cp pyproject.toml ~/.config/opencode/tool/
-
-# Install Python dependencies
-cd ~/.config/opencode/tool && uv sync
-```
+That is all the backend needs. A host adapter may also copy the tool into the
+directory that host expects — see [Compatibility](#compatibility).
 
 ## Usage
 
@@ -70,16 +27,36 @@ cd ~/.config/opencode/tool && uv sync
 
 ```bash
 # Direct backend execution (with .env file)
-uv run --directory ~/.config/opencode/tool --env-file .env pdf_ocr_backend.py <pdf_path> <output_format>
-
-# Via OpenCode agent
-Agent will use the pdf-ocr tool automatically
+uv run --directory pdf-ocr --env-file .env python tool/pdf_ocr_backend.py <pdf_path> <output_format>
 ```
+
+A host adapter normally invokes this for you (see [Compatibility](#compatibility)).
+
+### MCP server
+
+`pdf-ocr/tool/pdf_ocr_mcp.py` is a stdio MCP server exposing one tool,
+`pdf_ocr(pdf_path, page=None)`. It runs the backend, so the routing and prompt
+logic stay in one place.
+
+```bash
+# The venv must already exist (host-side `uv sync`); MCP hosts cannot install at runtime.
+uv run --frozen --directory <repo>/pdf-ocr python tool/pdf_ocr_mcp.py
+```
+
+Environment:
+
+- `DEEPSEEK_OCR_BASE_URL` — OCR endpoint **root** URL, no `/v1` suffix (required).
+- `PDF_OCR_ROUTING_CONFIG` — path to the routing JSON (optional; defaults to
+  `ocr_routing.json` next to the backend).
+
+If the endpoint is single-tenant, pin the routing table to `current_model` so OCR
+reuses the already-loaded model instead of requesting a different one.
 
 ## Parameters
 
-- `pdf_path`: Absolute path to PDF file
+- `pdf_path`: Absolute path to a PDF file, or an `http(s)` URL to download
 - `output_format`: Output format - "markdown" or "text" (defaults to "markdown")
+- `page`: Optional page selection - `5`, `1-5`, `1,3,5`, or `1-3,5,7-9` (defaults to all pages)
 
 ## Dependencies
 
@@ -103,13 +80,17 @@ The tool connects to an OpenAI-compatible endpoint. The endpoint can be configur
 
 2. **Environment variable**:
    ```bash
-   export DEEPSEEK_OCR_BASE_URL="http://your-endpoint:8080/v1"
+   export DEEPSEEK_OCR_BASE_URL="http://your-endpoint:8080"
    ```
 
 3. **Command-line argument** (overrides both above):
    ```bash
-   uv run --directory ~/.config/opencode/tool pdf_ocr_backend.py <pdf_path> <output_format> --base-url http://your-endpoint:8080/v1
+   uv run --directory pdf-ocr python tool/pdf_ocr_backend.py <pdf_path> <output_format> --base-url http://your-endpoint:8080
    ```
+
+The base URL is the endpoint **root** — do **not** append `/v1`. The backend
+derives `/running`, `/upstream/{model}/props`, and `/upstream/{model}/v1` itself;
+a `/v1` suffix makes model detection 404.
 
 If none of these are set, the tool will throw an error.
 
@@ -117,7 +98,9 @@ If none of these are set, the tool will throw an error.
 
 The tool uses model-based routing to determine which OCR method to use. This is configured in `ocr_routing.json`:
 
-**Location**: `~/.config/opencode/tool/pdf-ocr/tool/ocr_routing.json`
+**Location**: `ocr_routing.json` next to the backend. An alternative path can be
+supplied via the `PDF_OCR_ROUTING_CONFIG` environment variable or the
+`--routing-config` argument (the argument wins).
 
 **Structure**:
 ```json
@@ -253,10 +236,52 @@ If a dedicated OCR model is configured but fails:
 
 ### Configuration File Not Found
 
-If `ocr_routing.json` is missing, the tool will use defaults (`current_model`). To create the configuration file, run:
+If `ocr_routing.json` is missing, the tool will use defaults (`current_model`).
+Create it next to the backend, using `ocr_routing.json.example` as a starting
+point.
+
+## Compatibility
+
+The backend is host-agnostic. This is the one place host-specific names appear:
+
+| Host | Adapter | Install location |
+|---|---|---|
+| OpenCode | `pdf-ocr/tool/pdf-ocr.ts` | `~/.config/opencode/tool/` |
+| MCP clients (dsh, ...) | `pdf-ocr/tool/pdf_ocr_mcp.py` | anywhere; the host points at it |
+| pi | `pdf-ocr/pi/` | `~/.pi/agent/extensions/pdf-ocr/` + `~/.config/pi/tool/` |
+
+`deploy-tool.sh` deploys to either or both hosts. Each host owns its own `.env`
+and `ocr_routing.json`; nothing is shared at runtime.
+
 ```bash
-./deploy-tool.sh
+./deploy-tool.sh                  # both (default)
+./deploy-tool.sh --target opencode
+./deploy-tool.sh --target pi
+./deploy-tool.sh --force          # force reinstall
+./deploy-tool.sh --repo <path>    # use a different checkout
 ```
+
+### OpenCode
+
+Copies the tool into `~/.config/opencode/tool/` and runs `uv sync` there:
+
+```bash
+mkdir -p ~/.config/opencode/tool/
+cp pdf-ocr/tool/pdf-ocr.ts pdf-ocr/tool/pdf_ocr_backend.py pdf-ocr/pyproject.toml ~/.config/opencode/tool/
+cd ~/.config/opencode/tool && uv sync
+```
+
+### pi
+
+Copies the backend into `~/.config/pi/tool/` (override with `PDF_OCR_TOOL_DIR`)
+and the extension into `~/.pi/agent/extensions/pdf-ocr/`. Run `/reload` in pi
+afterwards to load the `pdf_ocr` tool. See `pdf-ocr/pi/README.md`.
+
+### MCP clients
+
+Register `pdf-ocr/tool/pdf_ocr_mcp.py` as a stdio server (see
+[MCP server](#mcp-server)). The venv must already exist; MCP hosts cannot install
+dependencies at runtime.
 
 ## Future Enhancements
 

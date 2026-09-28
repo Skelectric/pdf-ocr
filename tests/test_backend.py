@@ -203,8 +203,8 @@ class TestGetAllModels(unittest.TestCase):
     """Unit tests for get_all_models function."""
 
     @patch("pdf_ocr_backend.requests.get")
-    def test_get_all_models_llama_swap_format(self, mock_get):
-        """Test get_all_models with llama-swap /running format."""
+    def test_get_all_models_proxy_format(self, mock_get):
+        """Test get_all_models with the proxy /running format."""
         mock_response = MagicMock()
         mock_response.json.return_value = {
             "running": [
@@ -1279,7 +1279,13 @@ class TestURLHandling(unittest.TestCase):
                     pdf_ocr_backend.main()
 
         mock_download.assert_called_once_with("https://example.com/test.pdf")
-        mock_route.assert_called_once_with(temp_path, "markdown", None)
+        mock_route.assert_called_once_with(
+            temp_path,
+            "markdown",
+            None,
+            base_url=None,
+            routing_config_path=None,
+        )
         calls = mock_print.call_args_list
         self.assertTrue(any("OCR result from URL" in str(call) for call in calls))
 
@@ -1299,6 +1305,119 @@ class TestURLHandling(unittest.TestCase):
 
         calls = mock_print.call_args_list
         self.assertTrue(any("Download failed" in str(call) for call in calls))
+
+
+class TestBaseUrlAndRoutingConfigOverrides(unittest.TestCase):
+    """Explicit base-url / routing-config overrides (used by the MCP adapter)."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.test_pdf = os.path.join(self.temp_dir, "test.pdf")
+        doc = fitz.open()
+        doc.new_page(width=612, height=792)
+        doc.save(self.test_pdf)
+        doc.close()
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self.temp_dir)
+
+    @patch("pdf_ocr_backend.process_with_model")
+    @patch("pdf_ocr_backend.check_multimodal_support")
+    @patch("pdf_ocr_backend.load_ocr_routing_config")
+    @patch("pdf_ocr_backend.get_all_models")
+    @patch.dict(os.environ, {"DEEPSEEK_OCR_BASE_URL": "http://env:8080"})
+    def test_explicit_base_url_overrides_env(
+        self, mock_get_models, mock_load_config, mock_multimodal, mock_process
+    ):
+        """An explicit base_url wins over DEEPSEEK_OCR_BASE_URL."""
+        mock_get_models.return_value = ["vision-model"]
+        mock_load_config.return_value = {"ocr_routing": {}, "default": "current_model"}
+        mock_multimodal.return_value = True
+        mock_process.return_value = "ok"
+
+        result = pdf_ocr_backend.route_ocr_request(
+            self.test_pdf, "markdown", base_url="http://explicit:8080"
+        )
+
+        self.assertEqual(result, "ok")
+        mock_get_models.assert_called_once_with("http://explicit:8080")
+        mock_process.assert_called_once_with(
+            self.test_pdf, "markdown", "vision-model", "http://explicit:8080", [0]
+        )
+
+    @patch("pdf_ocr_backend.process_with_model")
+    @patch("pdf_ocr_backend.check_multimodal_support")
+    @patch("pdf_ocr_backend.load_ocr_routing_config")
+    @patch("pdf_ocr_backend.get_all_models")
+    @patch.dict(os.environ, {}, clear=True)
+    def test_explicit_base_url_works_without_env(
+        self, mock_get_models, mock_load_config, mock_multimodal, mock_process
+    ):
+        """An explicit base_url works even when the env var is unset."""
+        mock_get_models.return_value = ["vision-model"]
+        mock_load_config.return_value = {"ocr_routing": {}, "default": "current_model"}
+        mock_multimodal.return_value = True
+        mock_process.return_value = "ok"
+
+        result = pdf_ocr_backend.route_ocr_request(
+            self.test_pdf, "markdown", base_url="http://explicit:8080"
+        )
+
+        self.assertEqual(result, "ok")
+
+    @patch("pdf_ocr_backend.process_with_model")
+    @patch("pdf_ocr_backend.check_multimodal_support")
+    @patch("pdf_ocr_backend.load_ocr_routing_config")
+    @patch("pdf_ocr_backend.get_all_models")
+    @patch.dict(os.environ, {"DEEPSEEK_OCR_BASE_URL": "http://test:8080"})
+    def test_routing_config_path_forwarded(
+        self, mock_get_models, mock_load_config, mock_multimodal, mock_process
+    ):
+        """An explicit routing_config_path is forwarded to the loader."""
+        mock_get_models.return_value = ["vision-model"]
+        mock_load_config.return_value = {"ocr_routing": {}, "default": "current_model"}
+        mock_multimodal.return_value = True
+        mock_process.return_value = "ok"
+
+        pdf_ocr_backend.route_ocr_request(
+            self.test_pdf, "markdown", routing_config_path="/tmp/alt-routing.json"
+        )
+
+        mock_load_config.assert_called_once_with(Path("/tmp/alt-routing.json"))
+
+    def test_resolve_routing_config_path_precedence(self):
+        """Explicit arg > PDF_OCR_ROUTING_CONFIG env > tool-dir default."""
+        explicit = Path("/tmp/explicit.json")
+        self.assertEqual(
+            pdf_ocr_backend.resolve_routing_config_path(explicit), explicit
+        )
+
+        with patch.dict(os.environ, {"PDF_OCR_ROUTING_CONFIG": "/tmp/env.json"}):
+            self.assertEqual(
+                pdf_ocr_backend.resolve_routing_config_path(), Path("/tmp/env.json")
+            )
+
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(
+                pdf_ocr_backend.resolve_routing_config_path(),
+                Path(pdf_ocr_backend.__file__).parent / "ocr_routing.json",
+            )
+
+    def test_load_ocr_routing_config_honors_env(self):
+        """load_ocr_routing_config() uses PDF_OCR_ROUTING_CONFIG when unset."""
+        config_content = json.dumps(
+            {"ocr_routing": {"m": "glm-ocr"}, "default": "current_model"}
+        )
+
+        with patch.dict(os.environ, {"PDF_OCR_ROUTING_CONFIG": "/tmp/env-routing.json"}):
+            with patch("builtins.open", mock_open(read_data=config_content)) as m:
+                with patch.object(Path, "exists", return_value=True):
+                    result = pdf_ocr_backend.load_ocr_routing_config()
+
+        self.assertEqual(result["ocr_routing"]["m"], "glm-ocr")
+        m.assert_called_once_with(Path("/tmp/env-routing.json"), "r")
 
 
 if __name__ == "__main__":

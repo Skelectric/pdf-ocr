@@ -20,6 +20,21 @@ env_path = tool_dir / ".env"
 if env_path.exists():
     load_dotenv(env_path)
 
+# Name of the environment variable that points at a non-default routing config.
+# An MCP server (or another host adapter) sets this so it can ship a
+# deployment-specific ocr_routing.json without copying the whole tool.
+ROUTING_CONFIG_ENV = "PDF_OCR_ROUTING_CONFIG"
+
+
+def resolve_routing_config_path(config_path: Optional[Path] = None) -> Path:
+    """Resolve the routing config path: explicit arg > env var > tool dir."""
+    if config_path is not None:
+        return Path(config_path)
+    env_path = os.getenv(ROUTING_CONFIG_ENV)
+    if env_path:
+        return Path(env_path)
+    return Path(__file__).parent / "ocr_routing.json"
+
 
 def validate_environment_variables():
     """Validate environment variables for configuration."""
@@ -34,8 +49,7 @@ def validate_environment_variables():
         )
 
     # Check for routing config file (warning only if missing)
-    tool_dir = Path(__file__).parent
-    config_path = tool_dir / "ocr_routing.json"
+    config_path = resolve_routing_config_path()
     if not config_path.exists():
         warnings.append(f"Routing config not found at {config_path}, using defaults")
 
@@ -171,10 +185,10 @@ def cleanup_temp_file(path: str) -> None:
 
 def get_all_models(base_url: str) -> list:
     """
-    Query llama-swap /running endpoint for all currently loaded models.
+    Query the endpoint's /running API for all currently loaded models.
 
     Args:
-        base_url: Base URL for the llama-swap endpoint
+        base_url: Base URL for the OCR endpoint
 
     Returns:
         list: List of model ID strings currently loaded (e.g.,
@@ -199,7 +213,7 @@ def get_all_models(base_url: str) -> list:
                 if model_id:
                     models.append(model_id)
         elif isinstance(data, dict):
-            # Dict format: check for "running" key (llama-swap proxy)
+            # Dict format: check for "running" key (proxy response)
             if "running" in data and isinstance(data["running"], list):
                 for item in data["running"]:
                     model_id = item.get("model") or item.get("id")
@@ -497,7 +511,7 @@ def process_with_model(
         pdf_path: Path to the PDF file
         output_format: Output format (markdown or text)
         model_id: The model ID to use (e.g., "deepseek-ocr", "deepseek-ocr-2", "glm-ocr")
-        base_url: Base URL for the llama-swap endpoint
+        base_url: Base URL for the OCR endpoint
         page_indices: List of 0-based page indices to process. If None, all pages are processed.
 
     Returns:
@@ -601,9 +615,7 @@ def load_ocr_routing_config(config_path: Optional[Path] = None) -> dict:
     Returns:
         dict: Routing configuration with model mappings
     """
-    if config_path is None:
-        tool_dir = Path(__file__).parent
-        config_path = tool_dir / "ocr_routing.json"
+    config_path = resolve_routing_config_path(config_path)
 
     default_config = {"ocr_routing": {}, "default": "current_model"}
 
@@ -697,7 +709,11 @@ def get_ocr_method_for_model_set(model_ids: list, config: dict) -> str:
 
 
 def route_ocr_request(
-    pdf_path: str, output_format: str, page_spec: Optional[str] = None
+    pdf_path: str,
+    output_format: str,
+    page_spec: Optional[str] = None,
+    base_url: Optional[str] = None,
+    routing_config_path: Optional[str] = None,
 ) -> str:
     """
     Route OCR request based on model-set-based configuration.
@@ -706,6 +722,9 @@ def route_ocr_request(
         pdf_path: Path to the PDF file
         output_format: Output format (markdown or text)
         page_spec: Page specification string (e.g., "1-5", "1,3,5"). If None, all pages are processed.
+        base_url: OCR endpoint root URL. Overrides DEEPSEEK_OCR_BASE_URL when set.
+        routing_config_path: Path to the routing JSON. Overrides the
+            PDF_OCR_ROUTING_CONFIG env var and the tool-dir default when set.
 
     Returns:
         str: OCR result text
@@ -715,12 +734,15 @@ def route_ocr_request(
         1: General error (file not found, processing error, OCR model failure, etc.)
         3: NO_OCR_SUPPORT (current_model routing but model lacks vision support)
     """
-    base_url = os.getenv("DEEPSEEK_OCR_BASE_URL")
+    if not base_url:
+        base_url = os.getenv("DEEPSEEK_OCR_BASE_URL")
     if not base_url:
         raise Exception("DEEPSEEK_OCR_BASE_URL not set")
 
     # Load routing configuration
-    routing_config = load_ocr_routing_config()
+    routing_config = load_ocr_routing_config(
+        Path(routing_config_path) if routing_config_path else None
+    )
 
     # Get ALL loaded models (not just the first one)
     loaded_models = get_all_models(base_url)
@@ -788,7 +810,14 @@ def main():
     )
     parser.add_argument(
         "--base-url",
-        help="OpenAI-compatible endpoint URL (overrides DEEPSEEK_OCR_BASE_URL env var)",
+        help="OCR endpoint root URL, without a /v1 suffix (overrides DEEPSEEK_OCR_BASE_URL env var)",
+    )
+    parser.add_argument(
+        "--routing-config",
+        help=(
+            "Path to the OCR routing JSON (overrides the PDF_OCR_ROUTING_CONFIG "
+            "env var and the ocr_routing.json next to this script)"
+        ),
     )
     parser.add_argument(
         "--verbose",
@@ -820,7 +849,13 @@ def main():
 
     try:
         # Use the new routing system
-        output = route_ocr_request(pdf_path, args.output_format, args.page)
+        output = route_ocr_request(
+            pdf_path,
+            args.output_format,
+            args.page,
+            base_url=args.base_url,
+            routing_config_path=args.routing_config,
+        )
         print(output)
     except Exception as e:
         print(f"Error processing PDF: {e}")

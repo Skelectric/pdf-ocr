@@ -1,1 +1,1 @@
-"""Test suite for opencode-ocr PDF tool."""
+"""Test suite for the PDF OCR tool."""
