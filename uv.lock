@@ -251,7 +251,7 @@ wheels = [
 ]
 
 [[package]]
-name = "opencode-ocr"
+name = "pdf-ocr"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

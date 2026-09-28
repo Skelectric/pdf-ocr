@@ -1,5 +1,5 @@
 [project]
-name = "opencode-ocr"
+name = "pdf-ocr"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [

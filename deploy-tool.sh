@@ -6,7 +6,7 @@ set -euo pipefail
 # Options:
 #   --target {opencode,pi,both}  Which harness to deploy to (default: both)
 #   --force    Force reinstallation even if already installed
-#   --repo <path>  Specify custom repository path (default: ~/opencode-ocr)
+#   --repo <path>  Specify custom repository path (default: ~/pdf-ocr)
 #
 # Deploys:
 #   - opencode tool  -> ~/.config/opencode/tool/      (pdf-ocr.ts + backend)
