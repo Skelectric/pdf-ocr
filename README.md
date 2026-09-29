@@ -5,16 +5,15 @@ OCR on each page via an OpenAI-compatible model endpoint, and returns markdown
 output. Supports dedicated OCR models and multimodal vision models, selected per
 loaded-model set.
 
-`pdf-ocr/tool/pdf_ocr_backend.py` is the tool. Host adapters live beside it and
+`tool/pdf_ocr_backend.py` is the tool. Host adapters live beside it and
 only wrap the backend; see [Compatibility](#compatibility) for which adapter goes
 where.
 
 ## Installation
 
-The backend is a `uv` project under `pdf-ocr/`:
+The backend is a `uv` project at the repository root:
 
 ```bash
-cd pdf-ocr
 uv sync
 ```
 
@@ -27,20 +26,20 @@ directory that host expects — see [Compatibility](#compatibility).
 
 ```bash
 # Direct backend execution (with .env file)
-uv run --directory pdf-ocr --env-file .env python tool/pdf_ocr_backend.py <pdf_path> <output_format>
+uv run --env-file .env python tool/pdf_ocr_backend.py <pdf_path> <output_format>
 ```
 
 A host adapter normally invokes this for you (see [Compatibility](#compatibility)).
 
 ### MCP server
 
-`pdf-ocr/tool/pdf_ocr_mcp.py` is a stdio MCP server exposing one tool,
+`tool/pdf_ocr_mcp.py` is a stdio MCP server exposing one tool,
 `pdf_ocr(pdf_path, page=None)`. It runs the backend, so the routing and prompt
 logic stay in one place.
 
 ```bash
 # The venv must already exist (host-side `uv sync`); MCP hosts cannot install at runtime.
-uv run --frozen --directory <repo>/pdf-ocr python tool/pdf_ocr_mcp.py
+uv run --frozen python tool/pdf_ocr_mcp.py
 ```
 
 Environment:
@@ -85,7 +84,7 @@ The tool connects to an OpenAI-compatible endpoint. The endpoint can be configur
 
 3. **Command-line argument** (overrides both above):
    ```bash
-   uv run --directory pdf-ocr python tool/pdf_ocr_backend.py <pdf_path> <output_format> --base-url http://your-endpoint:8080
+   uv run python tool/pdf_ocr_backend.py <pdf_path> <output_format> --base-url http://your-endpoint:8080
    ```
 
 The base URL is the endpoint **root** — do **not** append `/v1`. The backend
@@ -246,9 +245,9 @@ The backend is host-agnostic. This is the one place host-specific names appear:
 
 | Host | Adapter | Install location |
 |---|---|---|
-| OpenCode | `pdf-ocr/tool/pdf-ocr.ts` | `~/.config/opencode/tool/` |
-| MCP clients (dsh, ...) | `pdf-ocr/tool/pdf_ocr_mcp.py` | anywhere; the host points at it |
-| pi | `pdf-ocr/pi/` | `~/.pi/agent/extensions/pdf-ocr/` + `~/.config/pi/tool/` |
+| OpenCode | `tool/pdf-ocr.ts` | `~/.config/opencode/tool/` |
+| MCP clients (dsh, ...) | `tool/pdf_ocr_mcp.py` | anywhere; the host points at it |
+| pi | `pi/` | `~/.pi/agent/extensions/pdf-ocr/` + `~/.config/pi/tool/` |
 
 `deploy-tool.sh` deploys to either or both hosts. Each host owns its own `.env`
 and `ocr_routing.json`; nothing is shared at runtime.
@@ -267,7 +266,7 @@ Copies the tool into `~/.config/opencode/tool/` and runs `uv sync` there:
 
 ```bash
 mkdir -p ~/.config/opencode/tool/
-cp pdf-ocr/tool/pdf-ocr.ts pdf-ocr/tool/pdf_ocr_backend.py pdf-ocr/pyproject.toml ~/.config/opencode/tool/
+cp tool/pdf-ocr.ts tool/pdf_ocr_backend.py pyproject.toml ~/.config/opencode/tool/
 cd ~/.config/opencode/tool && uv sync
 ```
 
@@ -275,11 +274,11 @@ cd ~/.config/opencode/tool && uv sync
 
 Copies the backend into `~/.config/pi/tool/` (override with `PDF_OCR_TOOL_DIR`)
 and the extension into `~/.pi/agent/extensions/pdf-ocr/`. Run `/reload` in pi
-afterwards to load the `pdf_ocr` tool. See `pdf-ocr/pi/README.md`.
+afterwards to load the `pdf_ocr` tool. See `pi/README.md`.
 
 ### MCP clients
 
-Register `pdf-ocr/tool/pdf_ocr_mcp.py` as a stdio server (see
+Register `tool/pdf_ocr_mcp.py` as a stdio server (see
 [MCP server](#mcp-server)). The venv must already exist; MCP hosts cannot install
 dependencies at runtime.
 

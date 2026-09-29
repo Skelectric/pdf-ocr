@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock, mock_open
 import sys
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "pdf-ocr" / "tool"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "tool"))
 import pdf_ocr_backend
 import fitz
 

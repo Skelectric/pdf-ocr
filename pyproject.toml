@@ -1,6 +1,7 @@
 [project]
 name = "pdf-ocr"
 version = "0.1.0"
+description = "PDF OCR backend using an OpenAI-compatible vision endpoint"
 requires-python = ">=3.12"
 dependencies = [
     "openai>=1.0.0",
@@ -8,6 +9,7 @@ dependencies = [
     "Pillow>=10.0.0",
     "python-dotenv>=1.0.0",
     "requests>=2.31.0",
+    "mcp>=2.0.0",
 ]
 
 [tool.pytest.ini_options]

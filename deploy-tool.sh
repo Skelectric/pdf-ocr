@@ -126,13 +126,13 @@ if [ "$TARGET" = "opencode" ] || [ "$TARGET" = "both" ]; then
 
     # Copy tool files
     echo "Copying tool files..."
-    cp "$REPO_DIR/pdf-ocr/tool/pdf-ocr.ts" "$TOOL_DIR/"
-    cp "$REPO_DIR/pdf-ocr/tool/pdf_ocr_backend.py" "$TOOL_DIR/"
-    cp "$REPO_DIR/pdf-ocr/pyproject.toml" "$TOOL_DIR/"
+    cp "$REPO_DIR/tool/pdf-ocr.ts" "$TOOL_DIR/"
+    cp "$REPO_DIR/tool/pdf_ocr_backend.py" "$TOOL_DIR/"
+    cp "$REPO_DIR/pyproject.toml" "$TOOL_DIR/"
 
     # Copy example routing config as reference (never overwrite user config)
     if [ ! -f "$TOOL_DIR/ocr_routing.json.example" ]; then
-        cp "$REPO_DIR/pdf-ocr/tool/ocr_routing.json.example" "$TOOL_DIR/"
+        cp "$REPO_DIR/tool/ocr_routing.json.example" "$TOOL_DIR/"
     fi
 
     # Make Python script executable
@@ -187,7 +187,7 @@ EOF
     # Install/update Python dependencies
     echo "Installing opencode Python dependencies..."
     cd "$TOOL_DIR"
-    uv sync
+    uv sync --no-dev
 
     # Verify installation
     echo "Verifying opencode installation..."
@@ -215,19 +215,19 @@ if [ "$TARGET" = "pi" ] || [ "$TARGET" = "both" ]; then
 
     # Backend files (same source as opencode; private deployed copy).
     echo "Copying pi backend files..."
-    cp "$REPO_DIR/pdf-ocr/tool/pdf_ocr_backend.py" "$PI_TOOL_DIR/"
-    cp "$REPO_DIR/pdf-ocr/pyproject.toml" "$PI_TOOL_DIR/"
+    cp "$REPO_DIR/tool/pdf_ocr_backend.py" "$PI_TOOL_DIR/"
+    cp "$REPO_DIR/pyproject.toml" "$PI_TOOL_DIR/"
     chmod +x "$PI_TOOL_DIR/pdf_ocr_backend.py"
 
     # Extension files.
     echo "Copying pi extension files..."
-    cp "$REPO_DIR/pdf-ocr/pi/index.ts" "$PI_EXT_DIR/"
-    cp "$REPO_DIR/pdf-ocr/pi/package.json" "$PI_EXT_DIR/"
-    cp "$REPO_DIR/pdf-ocr/pi/README.md" "$PI_EXT_DIR/"
+    cp "$REPO_DIR/pi/index.ts" "$PI_EXT_DIR/"
+    cp "$REPO_DIR/pi/package.json" "$PI_EXT_DIR/"
+    cp "$REPO_DIR/pi/README.md" "$PI_EXT_DIR/"
 
     # Reference routing config (never overwrites user config).
     if [ ! -f "$PI_TOOL_DIR/ocr_routing.json.example" ]; then
-        cp "$REPO_DIR/pdf-ocr/tool/ocr_routing.json.example" "$PI_TOOL_DIR/"
+        cp "$REPO_DIR/tool/ocr_routing.json.example" "$PI_TOOL_DIR/"
     fi
 
     # pi .env: when deploying both, reuse the endpoint already captured in
@@ -266,7 +266,7 @@ EOF
     # Install/update Python dependencies for the pi backend.
     echo "Installing pi Python dependencies..."
     cd "$PI_TOOL_DIR"
-    uv sync
+    uv sync --no-dev
 
     # Verify pi installation.
     echo "Verifying pi installation..."

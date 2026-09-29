@@ -12,7 +12,7 @@ Environment:
                             ``ocr_routing.json`` next to the backend.
 
 Run:
-    uv run --frozen --directory <repo>/pdf-ocr python tool/pdf_ocr_mcp.py
+    uv run --frozen python tool/pdf_ocr_mcp.py
 """
 
 import os
@@ -20,14 +20,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 BACKEND = Path(__file__).with_name("pdf_ocr_backend.py")
 BASE_URL_ENV = "DEEPSEEK_OCR_BASE_URL"
 ROUTING_CONFIG_ENV = "PDF_OCR_ROUTING_CONFIG"
 OCR_TIMEOUT_SECONDS = 3600
 
-mcp = FastMCP("pdf-ocr")
+mcp = MCPServer("pdf-ocr")
 
 
 @mcp.tool()
@@ -41,7 +42,7 @@ def pdf_ocr(pdf_path: str, page: str | None = None) -> str:
     """
     base_url = os.environ.get(BASE_URL_ENV)
     if not base_url:
-        raise RuntimeError(f"{BASE_URL_ENV} is not set for the pdf-ocr MCP server")
+        raise ToolError(f"{BASE_URL_ENV} is not set for the pdf-ocr MCP server")
 
     cmd = [sys.executable, str(BACKEND), pdf_path, "markdown", "--base-url", base_url]
     routing_config = os.environ.get(ROUTING_CONFIG_ENV)
@@ -58,17 +59,17 @@ def pdf_ocr(pdf_path: str, page: str | None = None) -> str:
             timeout=OCR_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:
-        raise RuntimeError(f"OCR timed out after {OCR_TIMEOUT_SECONDS}s: {pdf_path}")
+        raise ToolError(f"OCR timed out after {OCR_TIMEOUT_SECONDS}s: {pdf_path}")
 
     if proc.returncode == 3:
-        raise RuntimeError(
+        raise ToolError(
             "NO_OCR_SUPPORT: the routed OCR method is current_model but the loaded "
             "model declares no vision support. Add a routing rule for the loaded "
             f"model set.\n{proc.stderr.strip()}"
         )
     if proc.returncode != 0:
         detail = proc.stderr.strip() or proc.stdout.strip() or "unknown error"
-        raise RuntimeError(f"OCR failed (exit {proc.returncode}): {detail}")
+        raise ToolError(f"OCR failed (exit {proc.returncode}): {detail}")
 
     return proc.stdout.strip()
 

@@ -13,7 +13,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "pdf-ocr" / "tool"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "tool"))
+
+from mcp.server.mcpserver.exceptions import ToolError  # noqa: E402
 
 import pdf_ocr_mcp  # noqa: E402
 
@@ -30,7 +32,7 @@ class TestMCPAdapter(unittest.TestCase):
     @patch.dict(os.environ, {}, clear=True)
     def test_missing_base_url_raises(self):
         """Without DEEPSEEK_OCR_BASE_URL the tool fails fast with a clear error."""
-        with self.assertRaises(RuntimeError) as cm:
+        with self.assertRaises(ToolError) as cm:
             pdf_ocr_mcp.pdf_ocr("/tmp/x.pdf")
         self.assertIn("DEEPSEEK_OCR_BASE_URL", str(cm.exception))
 
@@ -81,12 +83,12 @@ class TestMCPAdapter(unittest.TestCase):
         os.environ, {"DEEPSEEK_OCR_BASE_URL": "http://host:8080"}, clear=True
     )
     def test_exit_3_translates_to_no_ocr_support(self, mock_run):
-        """Exit 3 becomes a NO_OCR_SUPPORT RuntimeError."""
+        """Exit 3 becomes a NO_OCR_SUPPORT ToolError."""
         mock_run.return_value = _completed(
             returncode=3, stderr="NO_OCR_SUPPORT: model lacks vision"
         )
 
-        with self.assertRaises(RuntimeError) as cm:
+        with self.assertRaises(ToolError) as cm:
             pdf_ocr_mcp.pdf_ocr("/tmp/doc.pdf")
 
         self.assertIn("NO_OCR_SUPPORT", str(cm.exception))
@@ -100,7 +102,7 @@ class TestMCPAdapter(unittest.TestCase):
         """A non-zero exit surfaces the backend's stderr."""
         mock_run.return_value = _completed(returncode=1, stderr="boom")
 
-        with self.assertRaises(RuntimeError) as cm:
+        with self.assertRaises(ToolError) as cm:
             pdf_ocr_mcp.pdf_ocr("/tmp/doc.pdf")
 
         self.assertIn("exit 1", str(cm.exception))
@@ -114,7 +116,7 @@ class TestMCPAdapter(unittest.TestCase):
         """A hung backend is reported as a timeout, not an unhandled error."""
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="pdf_ocr_backend.py", timeout=1)
 
-        with self.assertRaises(RuntimeError) as cm:
+        with self.assertRaises(ToolError) as cm:
             pdf_ocr_mcp.pdf_ocr("/tmp/doc.pdf")
 
         self.assertIn("timed out", str(cm.exception))
