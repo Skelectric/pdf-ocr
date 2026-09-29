@@ -1,7 +1,7 @@
 {
   "name": "pi-pdf-ocr",
   "version": "0.1.0",
-  "description": "PDF OCR tool for pi (DeepSeek-OCR / GLM-OCR / multimodal via llama-swap routing).",
+  "description": "PDF OCR tool for pi (DeepSeek-OCR / GLM-OCR / multimodal via an OpenAI-compatible endpoint).",
   "keywords": ["pi-package", "pdf", "ocr"],
   "type": "module",
   "pi": {

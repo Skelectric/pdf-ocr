@@ -3,16 +3,16 @@
 A [pi](https://pi.dev) extension that registers a `pdf_ocr` tool for transcribing
 PDF documents via OCR. It shells out to the harness-agnostic Python backend
 (`pdf_ocr_backend.py`), which converts PDF pages to images and routes them to an
-OCR model (DeepSeek-OCR / GLM-OCR / the currently loaded multimodal model) via a
-llama-swap proxy.
+OCR model (DeepSeek-OCR / GLM-OCR / the currently loaded multimodal model) via an
+OpenAI-compatible endpoint.
 
-This is the pi packaging of the same backend [opencode-ocr](../) uses. Each
+This is the pi packaging of the same backend [pdf-ocr](../) uses. Each
 harness deploys its own private copy of the backend — they share nothing at
 runtime.
 
 ## Install
 
-From the opencode-ocr repo root:
+From the pdf-ocr repo root:
 
 ```bash
 # pi only (skip OpenCode)
@@ -49,7 +49,7 @@ To force a reinstall of the tool files:
 
 The backend reads its configuration from `~/.config/pi/tool/`:
 
-- **`.env`** — `DEEPSEEK_OCR_BASE_URL` (the llama-swap proxy endpoint).
+- **`.env`** — `DEEPSEEK_OCR_BASE_URL` (the OCR endpoint root URL, no /v1 suffix).
 - **`ocr_routing.json`** — maps loaded model sets to an OCR method. See
   `ocr_routing.json.example` for the full schema and examples.
 
@@ -67,4 +67,4 @@ an error):
 | 1 | General error (file not found, API error, OCR model failure) |
 | 3 | `NO_OCR_SUPPORT` — routed to `current_model` but the model lacks vision |
 
-See the repo [README](../../README.md) for routing details and troubleshooting.
+See the repo [README](../README.md) for routing details and troubleshooting.

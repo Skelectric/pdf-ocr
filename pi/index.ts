@@ -4,10 +4,10 @@
  *
  * The backend (pdf_ocr_backend.py) is harness-agnostic: it converts PDF pages
  * to images, routes to an OCR model (DeepSeek-OCR / GLM-OCR / the currently
- * loaded multimodal model) via the llama-swap proxy, and prints markdown/text.
+ * loaded multimodal model) via the OCR endpoint, and prints markdown/text.
  * This extension is just the thin pi glue: argument marshalling + invocation.
  *
- * Install: run ./deploy-tool.sh in the opencode-ocr repo (deploys the backend
+ * Install: run ./deploy-tool.sh in the pdf-ocr repo (deploys the backend
  * to ~/.config/pi/tool/ and this extension to ~/.pi/agent/extensions/pdf-ocr/),
  * then /reload in pi.
  */
@@ -28,7 +28,7 @@ export default function (pi: ExtensionAPI) {
     name: "pdf_ocr",
     label: "PDF OCR",
     description:
-      "Extract text from PDF files using OCR (DeepSeek-OCR / GLM-OCR / current multimodal model, routed via llama-swap). Returns markdown or plain text. Accepts a local path or a http(s) URL to download.",
+      "Extract text from PDF files using OCR (DeepSeek-OCR / GLM-OCR / current multimodal model, routed via the OCR endpoint). Returns markdown or plain text. Accepts a local path or a http(s) URL to download.",
     promptSnippet: "OCR a PDF (local path or URL) to markdown/text",
     promptGuidelines: [
       "Use pdf_ocr when the user asks to transcribe or extract text from a PDF document.",
@@ -54,7 +54,7 @@ export default function (pi: ExtensionAPI) {
     async execute(_id, params, signal, onUpdate, ctx) {
       if (!fs.existsSync(BACKEND)) {
         throw new Error(
-          `pdf_ocr backend not found at ${BACKEND}. Run ./deploy-tool.sh in the opencode-ocr repo (or set PDF_OCR_TOOL_DIR).`,
+          `pdf_ocr backend not found at ${BACKEND}. Run ./deploy-tool.sh in the pdf-ocr repo (or set PDF_OCR_TOOL_DIR).`,
         );
       }
 
