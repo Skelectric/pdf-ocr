@@ -483,6 +483,10 @@ def process_pdf_pages(
             raise Exception(f"No OCR response for page {page_num + 1}")
 
         result_text = response.choices[0].message.content
+        
+        if result_text and extra_body and extra_body.get("skip_special_tokens") is False:
+            result_text = result_text.replace("\u0120", " ").replace("\u010a", "\n")
+
         results.append(f"--- Page {page_num + 1} ---\n{result_text}")
 
         img_data_url = None
