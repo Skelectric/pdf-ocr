@@ -104,15 +104,7 @@ supplied via the `PDF_OCR_ROUTING_CONFIG` environment variable or the
 **Structure**:
 ```json
 {
-  "_comment": "OCR Routing Configuration - Maps loaded model sets to preferred OCR method. Single-model keys work as before. Comma-separated keys match ALL loaded models (order-independent).",
-  "_routing_options": {
-    "deepseek-ocr": "Use DeepSeek-OCR model",
-    "deepseek-ocr-2": "Use DeepSeek-OCR-2 model",
-    "glm-ocr": "Use GLM-OCR model",
-    "current_model": "Use the currently loaded model (requires vision support)"
-  },
   "ocr_routing": {
-    "_comment": "Model-set examples: comma-separated keys match ALL loaded models",
     "primary-model,secondary-model-a": "deepseek-ocr-2",
     "primary-model,secondary-model-b": "glm-ocr",
     "primary-model": "current_model"
@@ -160,6 +152,18 @@ In this example:
 - When `primary-model` + `secondary-model-a` are loaded → uses `deepseek-ocr-2`
 - When `primary-model` + `secondary-model-b` are loaded → uses `glm-ocr`
 - When only `primary-model` is loaded → uses `current_model` (vision check required)
+
+**Route objects**:
+A value may also be an object `{model, base_url}`. The request then goes to `base_url`, any OpenAI-compatible endpoint, instead of the endpoint root; `model` selects the model there:
+```json
+{
+  "ocr_routing": {
+    "primary-model": { "model": "ocr-model-pool", "base_url": "http://other-endpoint:8080" }
+  },
+  "default": "current_model"
+}
+```
+`base_url` defaults to the endpoint root, so `{ "model": "glm-ocr" }` and `"glm-ocr"` are equivalent.
 
 Always use current model (disable dedicated OCR):
 ```json

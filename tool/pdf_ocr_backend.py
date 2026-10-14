@@ -2,7 +2,7 @@
 import sys
 import os
 import json
-from typing import Tuple, Optional
+from typing import Optional
 import fitz
 from openai import OpenAI
 from pathlib import Path
@@ -503,10 +503,11 @@ def process_with_model(
     page_indices: Optional[list] = None,
 ) -> str:
     """
-    Process PDF using any model via the upstream proxy.
+    Process PDF using any model through an OpenAI-compatible endpoint.
 
-    All models are served through the same upstream proxy pattern:
-    {base_url}/upstream/{model_id}/v1
+    The request goes to ``{base_url}/v1/chat/completions`` with the model in the
+    body. That is the OpenAI-compatible route every provider serves, and the
+    model id in the body is what selects the model.
 
     The only difference between OCR models is the prompt template
     (handled by get_prompt_template()), not the endpoint or processing logic.
@@ -532,9 +533,7 @@ def process_with_model(
         if doc.page_count == 0:
             raise Exception("PDF has no pages")
 
-        # All models use the upstream proxy endpoint
-        upstream_url = f"{base_url}/upstream/{model_id}/v1"
-        client = OpenAI(api_key="EMPTY", base_url=upstream_url, timeout=3600)
+        client = OpenAI(api_key="EMPTY", base_url=f"{base_url}/v1", timeout=3600)
         prompt_template = get_prompt_template(model_id)
 
         results = process_pdf_pages(
@@ -646,16 +645,17 @@ def load_ocr_routing_config(config_path: Optional[Path] = None) -> dict:
         return default_config
 
 
-def get_ocr_method_for_model(model_id: str, config: dict) -> str:
+def get_ocr_method_for_model(model_id: str, config: dict):
     """
-    Determine OCR method for a given model based on routing configuration.
+    Determine OCR route for a given model based on routing configuration.
 
     Args:
         model_id: The current model ID
         config: The routing configuration dictionary
 
     Returns:
-        str: "deepseek-ocr" or "current_model"
+        str | dict: the configured route - a model id string, a route object, or
+            "current_model"
     """
     routing = config.get("ocr_routing", {})
     default = config.get("default", "current_model")
@@ -673,9 +673,9 @@ def get_ocr_method_for_model(model_id: str, config: dict) -> str:
     return default
 
 
-def get_ocr_method_for_model_set(model_ids: list, config: dict) -> str:
+def get_ocr_method_for_model_set(model_ids: list, config: dict):
     """
-    Determine OCR method for a set of loaded models.
+    Determine OCR route for a set of loaded models.
 
     Matching priority:
     1. Exact model-set match (comma-separated key in config)
@@ -687,7 +687,7 @@ def get_ocr_method_for_model_set(model_ids: list, config: dict) -> str:
         config: The routing configuration dictionary
 
     Returns:
-        str: OCR method to use
+        str | dict: OCR route to use (see get_ocr_method_for_model)
     """
     routing = config.get("ocr_routing", {})
     default = config.get("default", "current_model")
@@ -710,6 +710,39 @@ def get_ocr_method_for_model_set(model_ids: list, config: dict) -> str:
 
     # 3. Return default
     return default
+
+
+def resolve_ocr_route(ocr_method, default_base_url: Optional[str] = None):
+    """
+    Normalise a routing-config value into ``(model_id, base_url)``.
+
+    A string value is a model id served by ``default_base_url``. An object value
+    may override the endpoint:
+
+        { "model": "...", "base_url": "..." }
+
+    ``base_url`` defaults to ``default_base_url`` (``DEEPSEEK_OCR_BASE_URL``).
+    The request goes to ``{base_url}/v1`` with the model in the body, so the tool
+    is generic: the endpoint is any OpenAI-compatible service.
+
+    Args:
+        ocr_method: A routing-config value: a model id string, or a route object.
+        default_base_url: Base URL used when the route does not set one.
+
+    Returns:
+        tuple: ``(model_id, base_url)``
+    """
+    if isinstance(ocr_method, dict):
+        model_id = ocr_method.get("model")
+        if not model_id:
+            raise Exception(f"routing config route object is missing 'model': {ocr_method!r}")
+        base_url = ocr_method.get("base_url") or default_base_url
+    else:
+        model_id = ocr_method
+        base_url = default_base_url
+    if not base_url:
+        raise Exception("no base URL for the OCR route (set DEEPSEEK_OCR_BASE_URL or the route's base_url)")
+    return model_id, base_url
 
 
 def route_ocr_request(
@@ -786,15 +819,18 @@ def route_ocr_request(
             print(error_msg, file=sys.stderr)
             sys.exit(3)
     else:
-        # Use specified OCR model (deepseek-ocr, deepseek-ocr-2, glm-ocr, or any future model)
-        # All models are served through the same upstream proxy pattern
-        logger.info(f"Routing to {ocr_method} based on loaded models: {loaded_models}")
+        # A configured OCR route: a model id (string) served by the default base
+        # URL, or an object that also sets the endpoint (base_url). The route
+        # object is how a non-default endpoint (e.g. the routing coordinator's
+        # ocr pool) is configured - with no tool-side special case.
+        model_id, route_base_url = resolve_ocr_route(ocr_method, base_url)
+        logger.info(f"Routing to {model_id} at {route_base_url} for loaded models: {loaded_models}")
         try:
             return process_with_model(
-                pdf_path, output_format, ocr_method, base_url, page_indices
+                pdf_path, output_format, model_id, route_base_url, page_indices
             )
         except Exception as e:
-            logger.error(f"{ocr_method} failed: {e}")
+            logger.error(f"{model_id} failed: {e}")
             raise
 
 

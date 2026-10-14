@@ -157,24 +157,12 @@ if [ "$TARGET" = "opencode" ] || [ "$TARGET" = "both" ]; then
 
         cat > "$ROUTING_CONFIG" << 'EOF'
 {
-  "_comment": "OCR Routing Configuration - Maps loaded model sets to preferred OCR method. Single-model keys work as before. Comma-separated keys match ALL loaded models (order-independent).",
-  "_routing_options": {
-    "deepseek-ocr": "Use DeepSeek-OCR model (requires sufficient VRAM)",
-    "deepseek-ocr-2": "Use DeepSeek-OCR-2 model (requires sufficient VRAM)",
-    "glm-ocr": "Use GLM-OCR model on GPU (lighter VRAM, for constrained setups)",
-    "glm-ocr-cpu": "Use GLM-OCR model on CPU (zero VRAM, uses ~3 GiB RAM)",
-    "current_model": "Use the currently loaded model (requires vision support)"
-  },
   "ocr_routing": {
-    "_comment": "Model-set examples: comma-separated keys match ALL loaded models",
-    "kimi-k2.6,qwen3.6-35b-a3b-nvfp4": "deepseek-ocr-2",
-    "kimi-k2.6,qwen3.6-27b-nvfp4,qwen3.5-4b": "glm-ocr",
-    "kimi-k2.6,qwen3.6-27b-nvfp4": "glm-ocr",
-    "kimi-k2.6": "current_model",
-    "kimi-k2.7-code,qwen3.6-27b-nvfp4": "glm-ocr-cpu",
-    "kimi-k2.7-code": "glm-ocr-cpu",
-    "qwen3.6-27b-mtp": "glm-ocr-cpu",
-    "qwen3.6-27b-mtp-cpu": "glm-ocr-cpu"
+    "model-A": "deepseek-ocr-2",
+    "model-A,subagent-model-B": "subagent-model-B",
+    "model-A,subagent-model-C": "deepseek-ocr-2",
+    "model-B": "current_model",
+    "model-C": { "model": "ocr-model-pool", "base_url": "http://other-endpoint:8080" }
   },
   "default": "current_model"
 }
@@ -182,6 +170,8 @@ EOF
 
         echo "Created default routing config at $ROUTING_CONFIG"
         echo "Edit this file to enable DeepSeek-OCR for specific models."
+        echo "Replace the model-A / model-B placeholders with your own available model ids."
+        echo "A route value may also be an object {model, base_url} to send OCR to a different OpenAI-compatible endpoint."
     fi
 
     # Install/update Python dependencies
@@ -254,7 +244,6 @@ if [ "$TARGET" = "pi" ] || [ "$TARGET" = "both" ]; then
         else
             cat > "$PI_ROUTING_CONFIG" << 'EOF'
 {
-  "_comment": "OCR Routing Configuration - Maps loaded model sets to preferred OCR method. Comma-separated keys match ALL loaded models (order-independent).",
   "ocr_routing": {},
   "default": "current_model"
 }
