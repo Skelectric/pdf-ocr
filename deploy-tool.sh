@@ -11,7 +11,8 @@ set -euo pipefail
 # Deploys:
 #   - opencode tool  -> ~/.config/opencode/tool/      (pdf-ocr.ts + backend)
 #   - pi extension   -> ~/.pi/agent/extensions/pdf-ocr/ + ~/.config/pi/tool/ (backend)
-# Each harness owns its own .env + ocr_routing.json; nothing is shared at runtime.
+# Each harness owns its own ocr_routing.json (one route); nothing is shared at
+# runtime.
 # Single-harness users: use --target opencode or --target pi to avoid deploying
 # the other harness's files and running a second uv sync.
 
@@ -62,12 +63,17 @@ if [ ! -d "$REPO_DIR" ]; then
     exit 1
 fi
 
-# Check if already installed (opencode side; pi has no pre-existing marker)
-if [ -f "$TOOL_DIR/pdf-ocr.ts" ] && [ "$FORCE" = false ]; then
+# Check if already installed, per target (the pi extension is pi's marker).
+case "$TARGET" in
+    opencode) INSTALLED_MARKER="$TOOL_DIR/pdf-ocr.ts" ;;
+    pi) INSTALLED_MARKER="$HOME/.pi/agent/extensions/pdf-ocr/index.ts" ;;
+    both) INSTALLED_MARKER="$TOOL_DIR/pdf-ocr.ts" ;;
+esac
+if [ -f "$INSTALLED_MARKER" ] && [ "$FORCE" = false ]; then
     echo "Tool already installed. Updating..."
     ACTION="updating"
 else
-    echo "Installing DeepSeek-OCR PDF Tool..."
+    echo "Installing PDF OCR Tool..."
     ACTION="installing"
 fi
 
@@ -75,195 +81,145 @@ echo "Source: $REPO_DIR"
 echo "Target: $TARGET"
 echo "Action: $ACTION"
 
-# Pull latest changes if it's a git repo
+# Pull latest changes if it's a git repo (skip a dirty tree rather than merge).
 if [ -d "$REPO_DIR/.git" ]; then
-    echo "Pulling latest changes..."
     cd "$REPO_DIR"
-    git pull || echo "Warning: git pull failed, continuing with current state"
+    if [ -n "$(git status --porcelain)" ]; then
+        echo "Working tree has local changes; skipping git pull"
+    else
+        echo "Pulling latest changes..."
+        git pull || echo "Warning: git pull failed, continuing with current state"
+    fi
 fi
 
 # ---------------------------------------------------------------------------
-# Shared helper: prompt for the OCR endpoint and write a .env file if
-# one doesn't exist. Returns the chosen endpoint in $SHARED_ENDPOINT (so a
-# --target both run can prompt once and reuse it for the pi side without a
-# second prompt).
+# Shared helpers: write the route file, prompt for it when absent, and deploy
+# one harness. The chosen values land in $SHARED_MODEL / $SHARED_ENDPOINT so a
+# --target both run prompts once and reuses them for the second harness.
 # ---------------------------------------------------------------------------
+SHARED_MODEL=""
 SHARED_ENDPOINT=""
-ensure_env_file() {
-    local env_file="$1" label="$2"
-    if [ -f "$env_file" ]; then
-        echo "  .env file already exists at $env_file"
-        # Capture the existing endpoint for cross-seeding (best-effort).
-        if [ -z "$SHARED_ENDPOINT" ]; then
-            SHARED_ENDPOINT=$(grep -E '^DEEPSEEK_OCR_BASE_URL=' "$env_file" 2>/dev/null | head -1 | sed -E 's/^DEEPSEEK_OCR_BASE_URL="?([^"]*)"?.*$/\1/' || true)
-        fi
+
+write_route_file() {
+    local route_file="$1" model="$2" endpoint="$3"
+    cat > "$route_file" << EOF
+{
+  "model": "$model",
+  "base_url": "$endpoint",
+  "prompt": "generic"
+}
+EOF
+}
+
+ensure_route_file() {
+    local route_file="$1" label="$2"
+    if [ -f "$route_file" ]; then
+        echo "  route file already exists at $route_file"
         return
     fi
     echo ""
-    echo "No .env found for $label. This tool requires an OCR proxy endpoint that provides:"
-    echo "  - OCR model serving (DeepSeek-OCR / GLM-OCR)"
-    echo "  - Model status endpoint (/running)"
-    echo "  - Model capability checks (/upstream/{model}/props)"
-    read -p "Enter OCR endpoint URL (e.g., http://localhost:8080): " ENDPOINT
-    if [ -z "$ENDPOINT" ]; then
-        echo "Warning: No endpoint provided. Using default http://localhost:8080"
-        ENDPOINT="http://localhost:8080"
+    echo "No route file found for $label. It names one route:"
+    echo "  - the OCR model id"
+    echo "  - the OCR endpoint root URL (any OpenAI-compatible service)"
+    read -p "Enter the OCR model id: " MODEL
+    read -p "Enter the OCR endpoint URL (e.g., http://localhost:8080): " ENDPOINT
+    MODEL="${MODEL:-your-ocr-model}"
+    ENDPOINT="${ENDPOINT:-http://localhost:8080}"
+    write_route_file "$route_file" "$MODEL" "$ENDPOINT"
+    echo "Route file created at $route_file"
+    if [ "$MODEL" = "your-ocr-model" ]; then
+        echo "  The model id is a placeholder. Replace it in $route_file with a model your endpoint serves."
     fi
-    echo "DEEPSEEK_OCR_BASE_URL=\"$ENDPOINT\"" > "$env_file"
-    echo ".env file created at $env_file"
+    SHARED_MODEL="$MODEL"
     SHARED_ENDPOINT="$ENDPOINT"
+}
+
+# Deploy one harness: copy <source> <destination> pairs, ship the example route
+# file, settle the route file, install the venv, and verify the copies landed.
+# route_mode is "own" (prompt for this harness's route) or "seed" (reuse
+# opencode's route file when it exists).
+deploy_target() {
+    local label="$1" tool_dir="$2" route_mode="$3"
+    shift 3
+
+    echo ""
+    echo "Deploying $label..."
+    mkdir -p "$tool_dir"
+
+    echo "Copying $label files..."
+    local -a deployed=()
+    while [ $# -gt 0 ]; do
+        local src="$1" dest="$2"
+        shift 2
+        mkdir -p "$(dirname "$dest")"
+        cp "$src" "$dest"
+        deployed+=("$dest")
+    done
+    chmod +x "$tool_dir/pdf_ocr_backend.py"
+
+    # Ship the example route file as a reference; never overwrite a user's file.
+    if [ ! -f "$tool_dir/ocr_routing.json.example" ]; then
+        cp "$REPO_DIR/tool/ocr_routing.json.example" "$tool_dir/"
+    fi
+    echo "Reference route file: $tool_dir/ocr_routing.json.example"
+
+    # The route file: one route, with its own endpoint.
+    local route_file="$tool_dir/ocr_routing.json"
+    if [ -f "$route_file" ]; then
+        echo "  route file already exists at $route_file"
+    elif [ "$route_mode" = "seed" ] && [ -f "$TOOL_DIR/ocr_routing.json" ]; then
+        cp "$TOOL_DIR/ocr_routing.json" "$route_file"
+        echo "  seeded ocr_routing.json from opencode's route file"
+    elif [ -n "$SHARED_ENDPOINT" ]; then
+        write_route_file "$route_file" "$SHARED_MODEL" "$SHARED_ENDPOINT"
+        echo "  created ocr_routing.json from the route just entered"
+    else
+        ensure_route_file "$route_file" "$label"
+    fi
+
+    echo "Installing $label Python dependencies..."
+    cd "$tool_dir"
+    uv sync --no-dev
+
+    echo "Verifying $label installation..."
+    local missing=""
+    local f
+    for f in "${deployed[@]}"; do
+        [ -f "$f" ] || missing="$missing $f"
+    done
+    if [ -z "$missing" ]; then
+        echo "All $label files installed successfully"
+    else
+        echo "Warning: missing files:$missing"
+    fi
 }
 
 # ---------------------------------------------------------------------------
 # opencode deployment
 # ---------------------------------------------------------------------------
 if [ "$TARGET" = "opencode" ] || [ "$TARGET" = "both" ]; then
-    echo ""
-    echo "Deploying opencode tool..."
-
-    # Create tool directory if it doesn't exist
-    mkdir -p "$TOOL_DIR"
-
-    # Copy tool files
-    echo "Copying tool files..."
-    cp "$REPO_DIR/tool/pdf-ocr.ts" "$TOOL_DIR/"
-    cp "$REPO_DIR/tool/pdf_ocr_backend.py" "$TOOL_DIR/"
-    cp "$REPO_DIR/pyproject.toml" "$TOOL_DIR/"
-
-    # Copy example routing config as reference (never overwrite user config)
-    if [ ! -f "$TOOL_DIR/ocr_routing.json.example" ]; then
-        cp "$REPO_DIR/tool/ocr_routing.json.example" "$TOOL_DIR/"
-    fi
-
-    # Make Python script executable
-    chmod +x "$TOOL_DIR/pdf_ocr_backend.py"
-
-    # .env: prompt if absent (sets $SHARED_ENDPOINT for the pi cross-seed).
-    ENV_FILE="$TOOL_DIR/.env"
-    ensure_env_file "$ENV_FILE" "opencode"
-
-    # During updates, remind users about the example config.
-    if [ -f "$TOOL_DIR/ocr_routing.json.example" ]; then
-        echo "Reference config with model-set routing examples: $TOOL_DIR/ocr_routing.json.example"
-    fi
-
-    # Create OCR routing configuration if missing.
-    ROUTING_CONFIG="$TOOL_DIR/ocr_routing.json"
-    if [ ! -f "$ROUTING_CONFIG" ]; then
-        echo ""
-        echo "Creating OCR routing configuration..."
-        echo "This file maps loaded model sets to their preferred OCR method."
-        echo "Single-model keys work as before. Comma-separated keys match ALL loaded models."
-
-        cat > "$ROUTING_CONFIG" << 'EOF'
-{
-  "ocr_routing": {
-    "model-A": "deepseek-ocr-2",
-    "model-A,subagent-model-B": "subagent-model-B",
-    "model-A,subagent-model-C": "deepseek-ocr-2",
-    "model-B": "current_model",
-    "model-C": { "model": "ocr-model-pool", "base_url": "http://other-endpoint:8080" }
-  },
-  "default": "current_model"
-}
-EOF
-
-        echo "Created default routing config at $ROUTING_CONFIG"
-        echo "Edit this file to enable DeepSeek-OCR for specific models."
-        echo "Replace the model-A / model-B placeholders with your own available model ids."
-        echo "A route value may also be an object {model, base_url} to send OCR to a different OpenAI-compatible endpoint."
-    fi
-
-    # Install/update Python dependencies
-    echo "Installing opencode Python dependencies..."
-    cd "$TOOL_DIR"
-    uv sync --no-dev
-
-    # Verify installation
-    echo "Verifying opencode installation..."
-    if [ -f "$TOOL_DIR/pdf-ocr.ts" ] && [ -f "$TOOL_DIR/pdf_ocr_backend.py" ] && [ -f "$TOOL_DIR/pyproject.toml" ]; then
-        echo "All opencode tool files installed successfully"
-    else
-        echo "Warning: Some opencode tool files may be missing"
-    fi
+    deploy_target "opencode" "$TOOL_DIR" own \
+        "$REPO_DIR/tool/pdf-ocr.ts" "$TOOL_DIR/pdf-ocr.ts" \
+        "$REPO_DIR/tool/pdf_ocr_backend.py" "$TOOL_DIR/pdf_ocr_backend.py" \
+        "$REPO_DIR/pyproject.toml" "$TOOL_DIR/pyproject.toml"
 fi
 
 # ---------------------------------------------------------------------------
 # pi deployment (independent of opencode; deploys a private backend copy).
 # Backend  -> ~/.config/pi/tool/      (parallel to ~/.config/opencode/tool/)
 # Extension -> ~/.pi/agent/extensions/pdf-ocr/  (pi global auto-discovery)
-# Each harness owns its own .env + ocr_routing.json; nothing is shared at
+# Each harness owns its own ocr_routing.json (one route); nothing is shared at
 # runtime. Override the backend dir with $PDF_OCR_TOOL_DIR.
 # ---------------------------------------------------------------------------
 if [ "$TARGET" = "pi" ] || [ "$TARGET" = "both" ]; then
     PI_TOOL_DIR="$HOME/.config/pi/tool"
     PI_EXT_DIR="$HOME/.pi/agent/extensions/pdf-ocr"
-
-    echo ""
-    echo "Deploying pi extension..."
-    mkdir -p "$PI_TOOL_DIR" "$PI_EXT_DIR"
-
-    # Backend files (same source as opencode; private deployed copy).
-    echo "Copying pi backend files..."
-    cp "$REPO_DIR/tool/pdf_ocr_backend.py" "$PI_TOOL_DIR/"
-    cp "$REPO_DIR/pyproject.toml" "$PI_TOOL_DIR/"
-    chmod +x "$PI_TOOL_DIR/pdf_ocr_backend.py"
-
-    # Extension files.
-    echo "Copying pi extension files..."
-    cp "$REPO_DIR/pi/index.ts" "$PI_EXT_DIR/"
-    cp "$REPO_DIR/pi/package.json" "$PI_EXT_DIR/"
-    cp "$REPO_DIR/pi/README.md" "$PI_EXT_DIR/"
-
-    # Reference routing config (never overwrites user config).
-    if [ ! -f "$PI_TOOL_DIR/ocr_routing.json.example" ]; then
-        cp "$REPO_DIR/tool/ocr_routing.json.example" "$PI_TOOL_DIR/"
-    fi
-
-    # pi .env: when deploying both, reuse the endpoint already captured in
-    # $SHARED_ENDPOINT (from the opencode prompt) so the user is prompted once.
-    # When deploying pi alone, prompt for pi's own .env. pi stays decoupled at
-    # runtime — it reads its own .env, never opencode's.
-    PI_ENV_FILE="$PI_TOOL_DIR/.env"
-    if [ -f "$PI_ENV_FILE" ]; then
-        echo "  .env file already exists at $PI_ENV_FILE"
-    elif [ -n "$SHARED_ENDPOINT" ]; then
-        echo "DEEPSEEK_OCR_BASE_URL=\"$SHARED_ENDPOINT\"" > "$PI_ENV_FILE"
-        echo "  created $PI_ENV_FILE (endpoint: $SHARED_ENDPOINT)"
-    else
-        ensure_env_file "$PI_ENV_FILE" "pi"
-    fi
-
-    # pi routing config: seed from opencode's if present (convenience on the
-    # same host), else a minimal default. User edits this file afterward.
-    PI_ROUTING_CONFIG="$PI_TOOL_DIR/ocr_routing.json"
-    if [ ! -f "$PI_ROUTING_CONFIG" ]; then
-        if [ -f "$TOOL_DIR/ocr_routing.json" ]; then
-            cp "$TOOL_DIR/ocr_routing.json" "$PI_ROUTING_CONFIG"
-            echo "  seeded ocr_routing.json from opencode's config"
-        else
-            cat > "$PI_ROUTING_CONFIG" << 'EOF'
-{
-  "ocr_routing": {},
-  "default": "current_model"
-}
-EOF
-            echo "  created default ocr_routing.json (edit to enable dedicated OCR models)"
-        fi
-    fi
-
-    # Install/update Python dependencies for the pi backend.
-    echo "Installing pi Python dependencies..."
-    cd "$PI_TOOL_DIR"
-    uv sync --no-dev
-
-    # Verify pi installation.
-    echo "Verifying pi installation..."
-    if [ -f "$PI_EXT_DIR/index.ts" ] && [ -f "$PI_EXT_DIR/package.json" ] && [ -f "$PI_TOOL_DIR/pdf_ocr_backend.py" ] && [ -f "$PI_TOOL_DIR/pyproject.toml" ]; then
-        echo "All pi files installed successfully"
-    else
-        echo "Warning: Some pi files may be missing"
-    fi
+    deploy_target "pi" "$PI_TOOL_DIR" seed \
+        "$REPO_DIR/tool/pdf_ocr_backend.py" "$PI_TOOL_DIR/pdf_ocr_backend.py" \
+        "$REPO_DIR/pyproject.toml" "$PI_TOOL_DIR/pyproject.toml" \
+        "$REPO_DIR/pi/index.ts" "$PI_EXT_DIR/index.ts" \
+        "$REPO_DIR/pi/package.json" "$PI_EXT_DIR/package.json" \
+        "$REPO_DIR/pi/README.md" "$PI_EXT_DIR/README.md"
 fi
 
 echo ""

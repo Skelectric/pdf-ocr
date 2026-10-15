@@ -1,10 +1,5 @@
 {
-  "ocr_routing": {
-    "model-A": "deepseek-ocr-2",
-    "model-A,subagent-model-B": "subagent-model-B",
-    "model-A,subagent-model-C": "deepseek-ocr-2",
-    "model-B": "current_model",
-    "model-C": { "model": "ocr-model", "base_url": "http://other-endpoint:8080" }
-  },
-  "default": "current_model"
+  "model": "your-ocr-model",
+  "base_url": "http://your-endpoint:8080",
+  "prompt": "generic"
 }

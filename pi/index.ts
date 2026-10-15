@@ -3,9 +3,9 @@
  * Python backend deployed at $PDF_OCR_TOOL_DIR (default ~/.config/pi/tool).
  *
  * The backend (pdf_ocr_backend.py) is harness-agnostic: it converts PDF pages
- * to images, routes to an OCR model (DeepSeek-OCR / GLM-OCR / the currently
- * loaded multimodal model) via the OCR endpoint, and prints markdown/text.
- * This extension is just the thin pi glue: argument marshalling + invocation.
+ * to images, sends them to the OCR route named in its route file, and prints
+ * markdown. This extension is just the thin pi glue: argument marshalling +
+ * invocation.
  *
  * Install: run ./deploy-tool.sh in the pdf-ocr repo (deploys the backend
  * to ~/.config/pi/tool/ and this extension to ~/.pi/agent/extensions/pdf-ocr/),
@@ -20,16 +20,17 @@ import { Type } from "typebox";
 const TOOL_DIR =
   process.env.PDF_OCR_TOOL_DIR || path.join(os.homedir(), ".config", "pi", "tool");
 const BACKEND = path.join(TOOL_DIR, "pdf_ocr_backend.py");
-// Matches the 3600s client timeout the backend uses for upstream OCR calls.
-const EXEC_TIMEOUT = 60 * 60 * 1000;
+// Above the backend's own 3600s request timeout, so the backend's actionable
+// timeout message reaches the caller instead of a kill at the same moment.
+const EXEC_TIMEOUT = 3660 * 1000;
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "pdf_ocr",
     label: "PDF OCR",
     description:
-      "Extract text from PDF files using OCR (DeepSeek-OCR / GLM-OCR / current multimodal model, routed via the OCR endpoint). Returns markdown or plain text. Accepts a local path or a http(s) URL to download.",
-    promptSnippet: "OCR a PDF (local path or URL) to markdown/text",
+      "Extract text from PDF files using OCR. Sends the pages to the OCR route configured in the route file. Returns markdown. Accepts a local path or a http(s) URL to download.",
+    promptSnippet: "OCR a PDF (local path or URL) to markdown",
     promptGuidelines: [
       "Use pdf_ocr when the user asks to transcribe or extract text from a PDF document.",
     ],
@@ -38,12 +39,6 @@ export default function (pi: ExtensionAPI) {
         description:
           "Path to PDF (absolute, relative to cwd, or a http(s) URL to download)",
       }),
-      output_format: Type.Optional(
-        Type.String({
-          description:
-            "Output format: 'markdown' or 'text' (defaults to 'markdown')",
-        }),
-      ),
       page: Type.Optional(
         Type.String({
           description:
@@ -69,7 +64,6 @@ export default function (pi: ExtensionAPI) {
         TOOL_DIR,
         BACKEND,
         pdfPath,
-        params.output_format || "markdown",
       ];
       if (params.page) args.push("--page", params.page);
 
@@ -87,11 +81,15 @@ export default function (pi: ExtensionAPI) {
       }
 
       // exit 1 = general error, exit 3 = NO_OCR_SUPPORT; the backend prints an
-      // actionable message to stderr. Throwing (not returning isError) is how
-      // pi marks a tool result as failed.
-      const msg =
-        res.stderr?.trim() || res.stdout?.trim() || `pdf_ocr failed (exit ${res.code})`;
-      throw new Error(msg);
+      // actionable message to stderr. On a partial page failure it also prints
+      // the pages that worked to stdout, so keep those rather than dropping
+      // real OCR output. Throwing (not returning isError) is how pi marks a
+      // tool result as failed.
+      const stderr = res.stderr?.trim();
+      const stdout = res.stdout?.trim();
+      const detail =
+        stderr && stdout ? `${stderr}\n\nPartial output:\n${stdout}` : stderr || stdout;
+      throw new Error(detail || `pdf_ocr failed (exit ${res.code})`);
     },
   });
 }
